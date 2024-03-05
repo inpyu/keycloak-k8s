@@ -1,0 +1,117 @@
+{{ if eq .Values.genians_nac6_enable "yes" }}
+{{ if eq .Values.genians_nac6_kibana_enable "yes" }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: kibana7-nac
+  labels:
+    k8s-app: kibana7-nac
+    kubernetes.io/cluster-service: "true"
+    addonmanager.kubernetes.io/mode: Reconcile
+    kubernetes.io/name: "Kibana"
+spec:
+  ports:
+  - port: 5601
+    protocol: TCP
+    targetPort: ui
+  selector:
+    k8s-app: kibana7-nac
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: kibana7-nac
+  annotations:
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
+    nginx.ingress.kubernetes.io/whitelist-source-range: {{ .Values.genians_ingress_admin_ip_block }}
+    kubernetes.io/ingress.class: {{ .Values.genians_ingress_type | quote }}
+spec:
+  tls:
+    - hosts:
+      - {{ printf "kibana-nac%s.%s" .Values.genians_service_region .Values.genians_service_domain }}
+      secretName: tls-secret
+  rules:
+    - host: {{ printf "kibana-nac%s.%s" .Values.genians_service_region .Values.genians_service_domain }}
+      http:
+        paths:
+        - path: /
+          pathType: Prefix
+          backend:
+            service:
+              name: kibana7-nac
+              port:
+                number: 5601
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kibana7-nac
+  labels:
+    k8s-app: kibana7-nac
+    addonmanager.kubernetes.io/mode: Reconcile
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      k8s-app: kibana7-nac
+  template:
+    metadata:
+      labels:
+        k8s-app: kibana7-nac
+      annotations:
+        seccomp.security.alpha.kubernetes.io/pod: 'docker/default'
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: role-tenant
+                operator: In
+                values:
+                - "true"
+    spec:
+      containers:
+      - name: kibana7-nac
+        image: docker.elastic.co/kibana/kibana:{{ .Values.elastic.version }}
+        securityContext:
+          allowPrivilegeEscalation: false
+          runAsUser: 1000
+          seLinuxOptions:
+            level: "s0:c0"
+        resources:
+          # need more cpu upon initialization, therefore burstable class
+          requests:
+            memory: "1Gi"
+        env:
+          - name: ELASTICSEARCH_HOSTS
+            value: http://elasticsearch-ztna:9200
+          - name: SERVER_NAME
+            value: kibana7-nac
+          - name: SERVER_REWRITEBASEPATH
+            value: "false"
+          - name: ELASTICSEARCH_USERNAME
+            value: "elastic"
+          - name: ELASTICSEARCH_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: elasticsearch-ztna-pass
+                key: password
+        ports:
+        - containerPort: 5601
+          name: ui
+          protocol: TCP
+        #livenessProbe:
+        #  httpGet:
+        #    path: /api/status
+        #    port: ui
+        #  initialDelaySeconds: 5
+        #  timeoutSeconds: 10
+        #readinessProbe:
+        #  httpGet:
+        #    path: /api/status
+        #    port: ui
+        #  initialDelaySeconds: 5
+        #  timeoutSeconds: 10
+{{ end }}
+{{ end }}

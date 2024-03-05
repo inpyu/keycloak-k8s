@@ -1,0 +1,235 @@
+{{ if eq .Values.genians_nac6_enable "yes" }}
+{{ if eq .Values.genians_database_ha "yes" }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mysql-ztna-config
+  labels:
+    app: mysql-ztna
+    app.kubernetes.io/name: mysql
+data:
+  primary.cnf: |
+    # Apply this config only on the primary.
+    [mysqld]
+    log-bin
+    skip_name_resolve
+    bind-address=0.0.0.0
+    character-set-server = utf8mb4
+    collation-server = utf8mb4_general_ci
+    default-authentication-plugin = mysql_native_password
+    log_bin_trust_function_creators = 1
+    performance_schema = off
+    explicit_defaults_for_timestamp = true
+    max_connections = 4096
+    max_allowed_packet = 16M
+    key_buffer_size = 32M
+    read_rnd_buffer_size = 2M
+    join_buffer_size = 1M
+    group_concat_max_len = 16384
+    myisam_sort_buffer_size = 128M
+    myisam_recover_options = DEFAULT
+    ft_min_word_len = 2
+    ft_stopword_file =
+    innodb_buffer_pool_size = 256M
+    innodb_log_file_size = 32M
+    innodb_flush_method = O_DIRECT
+    innodb_flush_log_at_trx_commit = 2
+    #innodb_force_recovery = 4
+    thread_cache_size = 5
+    tmp_table_size = 64M
+    max_heap_table_size = 64M
+    interactive_timeout = 1800
+    wait_timeout = 1800
+    sql_mode = "NO_ENGINE_SUBSTITUTION"
+    slow_query_log = 1
+    long-query-time = 2
+{{ if eq .Values.genians_certification_enable "yes" }}
+    slow_query_log_file = /var/log/mysql/slowquery-master.log
+    log-error = /var/log/mysql/error-master.log
+    general_log = 1
+    general_log_file = /var/log/mysql/general-master.log
+{{ else }}
+    #log-queries-not-using-indexes
+    #slow_query_log_file = /var/log/mysql/slowquery.log
+    #log-error = /var/log/mysql/error.log
+    #general_log = 0
+    #general_log_file = /var/log/mysql/general.log
+{{ end }}
+  replica.cnf: |
+    # Apply this config only on replicas.
+    [mysqld]
+    super-read-only
+    skip_name_resolve
+    bind-address=0.0.0.0
+    character-set-server = utf8mb4
+    collation-server = utf8mb4_general_ci
+    default-authentication-plugin = mysql_native_password
+    log_bin_trust_function_creators = 1
+    performance_schema = off
+    explicit_defaults_for_timestamp = true
+    max_connections = 4096
+    max_allowed_packet = 16M
+    key_buffer_size = 32M
+    read_rnd_buffer_size = 2M
+    join_buffer_size = 1M
+    group_concat_max_len = 16384
+    myisam_sort_buffer_size = 128M
+    myisam_recover_options = DEFAULT
+    ft_min_word_len = 2
+    ft_stopword_file =
+    innodb_buffer_pool_size = 256M
+    innodb_log_file_size = 32M
+    innodb_flush_method = O_DIRECT
+    innodb_flush_log_at_trx_commit = 2
+    #innodb_force_recovery = 4
+    thread_cache_size = 5
+    tmp_table_size = 64M
+    max_heap_table_size = 64M
+    interactive_timeout = 1800
+    wait_timeout = 1800
+    sql_mode = "NO_ENGINE_SUBSTITUTION"
+    slow_query_log = 1
+    long-query-time = 2
+{{ if eq .Values.genians_certification_enable "yes" }}
+    slow_query_log_file = /var/log/mysql/slowquery-slave.log
+    log-error = /var/log/mysql/error-slave.log
+    general_log = 1
+    general_log_file = /var/log/mysql/general-slave.log
+{{ else }}
+    #log-queries-not-using-indexes
+    #slow_query_log_file = /var/log/mysql/slowquery.log
+    #log-error = /var/log/mysql/error.log
+    #general_log = 0
+    #general_log_file = /var/log/mysql/general.log
+{{ end }}
+  healthcheck.sh: |
+    #!/bin/bash
+    set -ex
+    [[ `cat /etc/hostname` =~ -([0-9]+)$ ]] || exit 1
+    ordinal=${BASH_REMATCH[1]}
+    RESULT=`MYSQL_PWD=${MYSQL_ROOT_PASSWORD} mysql -h 127.0.0.1 -u root -s --disable-column-names -e "SELECT @@GLOBAL.READ_ONLY"`
+
+    [ $? -ne 0 ] && echo "[WARNING] mysql-ztna-$ordinal mysql down!" && exit 1
+
+    if [ -f /mysql-ztna-health/current_master ] ; then
+      master_idx=`cat /mysql-ztna-health/current_master`
+    else
+      exit 0
+    fi
+    if [ $ordinal -ne $master_idx ] ; then
+      if [ "x$RESULT" == "x0" ] ; then
+        echo "[WARNING] Two master possibilities."
+        exit 1
+      else
+        exit 0
+      fi
+    fi
+    exit 0
+  mysql-ztna-monitor.sh: |
+    #!/bin/bash
+    KUBECTL="/snap/bin/kubectl"
+    HEALTH_PATH="/mysql-ztna-health"
+    SFS_NAME="mysql-ztna"
+    MYSQL_NODE_COUNT=2
+    MYSQL_0="${SFS_NAME}-0.${SFS_NAME}"
+    MYSQL_1="${SFS_NAME}-1.${SFS_NAME}"
+    DEFAULT_POLLING_TIME=30
+
+    ### Status files value discription
+    ## /mysql-ztna-health/current_master
+    # 0 => MYSQL_0
+    # 1 => MYSQL_1
+    # n => MYSQL_n
+
+    if [ ! -f $HEALTH_PATH/current_master ] ; then
+      echo "0" > $HEALTH_PATH/current_master
+    fi
+    while ( true ) ; do
+      # CMI = Current Master Index
+      CMI=`cat $HEALTH_PATH/current_master`
+
+      # master status check
+      COUNT=0
+      # NCM = Need Change Master
+      NCM="false"
+
+      # Check master Node health
+      echo "check master node"
+      while ( true ) ; do
+        # RESULT(Is it Master node?) : 0(true) 1(false)
+        RESULT=`mysql -h ${SFS_NAME}-${CMI}.${SFS_NAME} -u root -s --disable-column-names -e "SELECT @@GLOBAL.READ_ONLY" 2> /dev/null`
+        if [ $? -ne 0 ] ; then
+          echo "ZTNA Mysql Master Server Check Failed!"
+          touch $HEALTH_PATH/master_healthcheck_failed
+          let "COUNT += 1"
+          sleep $DEFAULT_POLLING_TIME
+        elif [ "x$RESULT" != "x0" ] ; then
+          # Master node info missmatch.
+          # Recheck master node.
+          echo "Master node info missmatch, recheck master node."
+          INDEX=0
+          MASTER_COUNT=0
+          while ( [ $INDEX -lt $MYSQL_NODE_COUNT ] ) ; do
+            RESULT=`mysql -h ${SFS_NAME}-${INDEX}.${SFS_NAME} -u root -s --disable-column-names -e "SELECT @@GLOBAL.READ_ONLY" 2> /dev/null`
+            [ $? -eq 0 ] && [ "x$RESULT" == "x0" ] && let "MASTER_COUNT += 1" && NEW_MASTER=$INDEX
+            let "INDEX += 1"
+          done
+          if [ $MASTER_COUNT -eq 0 ] ; then
+            echo "Can't found master node. Skip!"
+            break
+          elif [ $MASTER_COUNT -eq 1 ] ; then
+            echo "New master node update!"
+            echo "$NEW_MASTER" > $HEALTH_PATH/current_master
+            $KUBECTL patch service dbserver-nac6 --patch "{\"spec\": {\"selector\": {\"statefulset.kubernetes.io/pod-name\": \"${SFS_NAME}-${NEW_MASTER}\"}}}"
+            break
+          else
+            echo "Worrong Check or master node duplicate. Skip!"
+            break
+          fi
+        else
+          echo "master node(${SFS_NAME}-${CMI}.${SFS_NAME}) ok"
+          [ -f $HEALTH_PATH/master_healthcheck_failed ] && rm $HEALTH_PATH/master_healthcheck_failed
+          # kubernetes service host check & update
+          $KUBECTL patch service dbserver-nac6 --patch "{\"spec\": {\"selector\": {\"statefulset.kubernetes.io/pod-name\": \"${SFS_NAME}-${CMI}\"}}}"
+          break
+        fi
+        # If master status check until 2 minutes failed then change master.
+        [ $COUNT -gt 12 ] && echo "Need Change Master!" && NCM="true" && break
+      done
+
+      # Check replica Node Check
+      INDEX=0
+      while ( [ $INDEX -lt $MYSQL_NODE_COUNT ] ) ; do
+        RESULT=`mysql -h ${SFS_NAME}-${INDEX}.${SFS_NAME} -u root -s --disable-column-names -e "SELECT @@GLOBAL.READ_ONLY" 2> /dev/null`
+        [ $? -eq 0 ] && break
+        let "INDEX += 1"
+      done
+
+      if [ "$NCM" == "true" ] ; then
+        [ $INDEX -ge $MYSQL_NODE_COUNT ] && echo "All Node Down so Don't Change Master Node." && continue
+        if [ "x$RESULT" == "x1" ] ; then
+          echo "$INDEX" > $HEALTH_PATH/need_change_master && echo "$INDEX" > $HEALTH_PATH/current_master
+          $KUBECTL patch service dbserver-nac6 --patch "{\"spec\": {\"selector\": {\"statefulset.kubernetes.io/pod-name\": \"${SFS_NAME}-${INDEX}\"}}}"
+
+          # Restart pod for Change master node
+          $KUBECTL delete pod -n default ${SFS_NAME}-${INDEX}
+
+          # Wait for master node change.
+          COUNT=0
+          echo -n "Waiting master node change."
+          while ( true ) ; do
+            RESULT=`mysql -h dbserver-nac6 -u root -s --disable-column-names -e "SELECT @@GLOBAL.READ_ONLY" 2> /dev/null`
+            [ $? -ne 0 ] && echo -n "." && sleep 5 && continue
+            if [ "x$RESULT" = "x0" ] ; then
+              echo "Master node Changed"
+              [ -f $HEALTH_PATH/need_change_master ] && rm $HEALTH_PATH/need_change_master
+              [ -f $HEALTH_PATH/master_healthcheck_failed ] && rm $HEALTH_PATH/master_healthcheck_failed
+              break
+            fi
+          done
+        fi
+      fi
+      sleep $DEFAULT_POLLING_TIME
+    done
+{{ end }}
+{{ end }}

@@ -1,0 +1,67 @@
+{{ if eq .Values.genians_nac6_enable "yes" }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: filebeat-nac6-nodeport
+  labels:
+    app: filebeat-nac6
+spec:
+  type: NodePort
+  ports:
+  - name: event
+    port: 9996
+    protocol: UDP
+    nodePort: 9996
+  selector:
+    app: filebeat-nac6
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: filebeat-nac6
+  labels:
+    app: filebeat-nac6
+spec:
+  selector:
+    matchLabels:
+      app: filebeat-nac6
+  template:
+    metadata:
+      name: filebeat-nac6
+      labels:
+        app: filebeat-nac6
+    spec:
+      enableServiceLinks: false
+      automountServiceAccountToken: false
+      containers:
+      - name: filebeat-nac6
+        image: genians/filebeat:{{ .Values.elastic.version }}
+        securityContext:
+          allowPrivilegeEscalation: false
+          runAsUser: 1000
+          seLinuxOptions:
+            level: "s0:c0"
+        imagePullPolicy: {{ .Values.genians_default_imagepullpolicy }}
+        env:
+        - name: ES_HOST
+          value: "elasticsearch-ztna"
+        - name: ES_USER
+          valueFrom:
+            configMapKeyRef:
+              name: elasticsearch-ztna-config
+              key: ES_USER
+        - name: ES_PASS
+          valueFrom:
+            secretKeyRef:
+              name: elasticsearch-ztna-pass
+              key: password
+        - name: NAC_ELASTIC_VERSION
+          value: {{ .Values.elastic.version | quote }}
+        ports:
+        - containerPort: 9996
+          protocol: TCP
+        - containerPort: 9996
+          protocol: UDP
+      imagePullSecrets:
+      - name: regcred
+{{ end }}

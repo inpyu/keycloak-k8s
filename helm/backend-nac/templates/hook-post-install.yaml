@@ -1,0 +1,152 @@
+{{- if .Values.genians_csm_server }}
+{{- $repo := "" }}
+{{- if eq .Values.genians_default_branch "current" }}{{- $repo = "-dev" }}{{- end }}
+
+{{- $hname := "" }}
+{{- if .Values.genians_service_region }}
+  {{- $hname = printf "%s.%s" .Values.genians_service_region .Values.genians_service_domain }}
+{{- else }}
+  {{- $hname = .Values.genians_service_domain }}
+{{- end }}
+{{ if eq .Values.genians_nac6_enable "yes" }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: backend-nac6-post-install
+  annotations:
+    "helm.sh/hook": post-install, post-upgrade
+spec:
+  template:
+    spec:
+      serviceAccountName: ctlsrv
+      automountServiceAccountToken: true
+      containers:
+      - name: main
+        image: {{ printf "docker.io/genians/genian-ctlsrv%s" $repo }}
+        imagePullPolicy: {{ .Values.genians_default_imagepullpolicy }}
+        env:
+        - name: ES_PASS
+          valueFrom:
+            secretKeyRef:
+              name: elasticsearch-ztna-pass
+              key: password
+        command:
+        - /bin/bash
+        - -xc
+        - |
+          # Enable elasticsearch snapshot for elasticsearch-ztna
+          MAXTRY=90
+          echo "Waiting Elasticsearch..."
+          while [ "$MAXTRY" -gt "0" ] ; do
+              LOGSERVER=`kubectl get services | grep -E "^elasticsearch-ztna " | awk '{print $3}'`
+              if [ "x$LOGSERVER" != "x" ] ; then
+                  RETURNCODE=`curl -uelastic:$ES_PASS --write-out %{http_code} --silent --output /dev/null http://${LOGSERVER}:9200/ || true`
+                  if [ "x$RETURNCODE" == "x200" ] ; then
+                      break
+                  fi
+              fi
+              MAXTRY=$(($MAXTRY-1))
+              echo -n "."
+              sleep 1
+          done
+          echo ""
+
+          echo "####### Create elasticsearch snapshot repository..."
+          if [ "x{{ .Values.BACKUP_PROVIDER | toString | b64dec }}" == "xaws" ] || [ "x{{ .Values.BACKUP_PROVIDER | toString | b64dec }}" == "xncloud" ] ; then
+              echo "S3 Snapshot repository create."
+              curl --silent -uelastic:$ES_PASS -XPUT "http://${LOGSERVER}:9200/_snapshot/s3_backup?pretty" -H 'Content-Type: application/json' -d @<(cat <<EOF
+          {
+            "type": "s3",
+            "settings": {
+              "bucket": "{{ .Values.BACKUP_S3_BUCKET_NAME | toString | b64dec }}",
+              "base_path": "backup/elasticsearch-nac6/{{ $hname }}"
+            }
+          }
+          EOF
+          )
+          fi
+
+          if [ "x{{ .Values.BACKUP_SECONDARY | toString | b64dec }}" == "xyes" ] ; then
+              echo "####### Create elasticsearch Secondary backup snapshot repository..."
+              if [ "x{{ .Values.BACKUP_PROVIDER | toString | b64dec }}" == "xaws" ] || [ "x{{ .Values.BACKUP_PROVIDER | toString | b64dec }}" == "xncloud" ] ; then
+                  echo "S3 Snapshot repository create."
+                  curl --silent -uelastic:$ES_PASS -XPUT "http://${LOGSERVER}:9200/_snapshot/s3_secondarybackup?pretty" -H 'Content-Type: application/json' -d @<(cat <<EOF
+          {
+            "type": "s3",
+            "settings": {
+              "bucket": "{{ .Values.BACKUP_S3_BUCKET_NAME | toString | b64dec }}",
+              "base_path": "secondarybackup/elasticsearch-nac6/{{ $hname }}"
+            }
+          }
+          EOF
+          )
+              fi
+          fi
+
+           if [ "x{{ .Values.BACKUP_PROVIDER | toString | b64dec }}" == "xlocal" ] ; then
+              echo "####### Create elasticsearch local backup snapshot repository..."
+              echo "local Snapshot repository create."
+              curl --silent -uelastic:$ES_PASS -XPUT "http://${LOGSERVER}:9200/_snapshot/local_backup?pretty" -H 'Content-Type: application/json' -d @<(cat <<EOF
+          {
+            "type": "fs",
+            "settings": {
+              "compress": true,
+              "location": "/usr/share/elasticsearch/backup"
+            }
+          }
+          EOF
+          )
+          fi
+        securityContext:
+          seLinuxOptions:
+            level: s0:c0
+          runAsUser: 0
+          allowPrivilegeEscalation: false
+      restartPolicy: Never
+      imagePullSecrets:
+      - name: regcred
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: nac6-import-post-install
+  annotations:
+    "helm.sh/hook": post-install, post-upgrade
+spec:
+  template:
+    spec:
+      containers:
+      - name: nac6-import
+        image: genians/logstash:{{ .Values.elastic.shipper }}
+        securityContext:
+          allowPrivilegeEscalation: false
+          runAsUser: 0
+          seLinuxOptions:
+            level: "s0:c0"
+        env:
+        - name: ES_USER
+          value: "elastic"
+        - name: LOGSERVER
+          value: "elasticsearch-ztna"
+        - name: ES_PASS
+          valueFrom:
+            secretKeyRef:
+              name: elasticsearch-ztna-pass
+              key: password
+        command:
+        - sh
+        - -c
+        - |
+          cp /nac/logstash.yml /usr/share/logstash/config
+          /nac/import.sh
+        securityContext:
+          seLinuxOptions:
+            level: s0:c0
+          runAsUser: 0
+          allowPrivilegeEscalation: false
+      restartPolicy: Never
+      imagePullSecrets:
+      - name: regcred
+{{ end }}
+{{- end }}

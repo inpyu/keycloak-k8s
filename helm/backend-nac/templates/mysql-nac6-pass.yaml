@@ -1,0 +1,14 @@
+{{ if eq .Values.genians_nac6_enable "yes" }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: mysql-nac6-pass
+type: Opaque
+data:
+  # retrieve the secret data using lookup function and when not exists, return an empty dictionary / map as result
+  {{- $secretObj := (lookup "v1" "Secret" .Release.Namespace "mysql-nac6-pass") | default dict }}
+  {{- $secretData := (get $secretObj "data") | default dict }}
+  # set $password to existing secret data or generate a random one when not exists
+  {{- $passValue := (get $secretData "password") | default (randAlphaNum 16 | b64enc) }}
+  password: {{ $passValue | quote }}
+{{ end }}

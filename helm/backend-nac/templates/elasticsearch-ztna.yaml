@@ -1,0 +1,230 @@
+{{ if eq .Values.genians_nac6_enable "yes" }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: elasticsearch-ztna
+  labels:
+    app: elasticsearch-ztna
+spec:
+  {{- .Values.elasticsearch_ztna.service.spec | toYaml | nindent 4 }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: es-ztna-cert-pvc
+  labels:
+    app: elasticsearch-ztna
+spec:
+  accessModes:
+  - ReadWriteMany
+  storageClassName: shared
+  resources:
+    requests:
+      storage: 1Gi
+---
+{{- if eq (.Values.BACKUP_PROVIDER | toString | b64dec) "local" }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: es-ztna-backup-pvc
+  labels:
+    app: elasticsearch-ztna
+spec:
+  accessModes:
+  - ReadWriteMany
+  storageClassName: shared
+  resources:
+    requests:
+      storage: 256Gi
+---
+{{- end }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: elasticsearch-ztna
+spec:
+  serviceName: "elasticsearch-ztna"
+  replicas: {{ .Values.elastic.replicas }}
+  selector:
+    matchLabels:
+      app: elasticsearch-ztna
+  template:
+    metadata:
+      labels:
+        app: elasticsearch-ztna
+      annotations:
+        co.elastic.logs/module: elasticsearch
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: role-backend
+                operator: In
+                values:
+                - "true"
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 1
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - "elasticsearch-ztna"
+              topologyKey: "kubernetes.io/hostname"
+      terminationGracePeriodSeconds: 300
+      enableServiceLinks: false
+      initContainers:
+      - name: init-sysctl
+        image: busybox
+        command:
+        - sh
+        - -c
+        - |
+          sysctl -w vm.max_map_count=262144
+          chown -R 1000:1000 /usr/share/elasticsearch/data
+          chown -R 1000:1000 /usr/share/elasticsearch/config/certs
+          ulimit -n 65536
+        volumeMounts:
+        - name: es-ztna-data
+          mountPath: /usr/share/elasticsearch/data
+        - name: es-ztna-cert-storage
+          mountPath: /usr/share/elasticsearch/config/certs
+        securityContext:
+          privileged: true
+          runAsUser: 0
+          seLinuxOptions:
+            level: "s0:c0"
+      - name: make-cert
+        image: docker.elastic.co/elasticsearch/elasticsearch:{{ .Values.elastic.version }}
+        securityContext:
+          allowPrivilegeEscalation: false
+          runAsUser: 1000
+          seLinuxOptions:
+            level: "s0:c0"
+          capabilities:
+            add:
+              - IPC_LOCK
+        command:
+        - sh
+        - -c
+        - |
+          if [ ! -f /usr/share/elasticsearch/config/certs/elastic-certificates.p12 ] ; then
+            elasticsearch-certutil ca --out /usr/share/elasticsearch/config/certs/elastic-stack-ca.p12 --pass ''
+            elasticsearch-certutil cert --name security-master --dns security-master --ca /usr/share/elasticsearch/config/certs/elastic-stack-ca.p12 --pass '' --ca-pass '' --out /usr/share/elasticsearch/config/certs/elastic-certificates.p12
+          else
+            echo "Elastic certificate file exist."
+          fi
+          [ ! -f /usr/share/elasticsearch/config/certs/elastic-certificate.pem ] && openssl pkcs12 -nodes -passin pass:'' -in /usr/share/elasticsearch/config/certs/elastic-certificates.p12 -out /usr/share/elasticsearch/config/certs/elastic-certificate.pem
+          [ ! -f /usr/share/elasticsearch/config/certs/elastic-certificate.crt ] && openssl x509 -outform der -in /usr/share/elasticsearch/config/certs/elastic-certificate.pem -out /usr/share/elasticsearch/config/certs/elastic-certificate.crt
+          exit 0
+        volumeMounts:
+        - name: es-ztna-cert-storage
+          mountPath: /usr/share/elasticsearch/config/certs
+        env:
+        - name: node.name
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+      containers:
+      - name: elasticsearch-ztna
+        image: docker.elastic.co/elasticsearch/elasticsearch:{{ .Values.elastic.version }}
+        command:
+        - sh
+        - -c
+        - |
+          elasticsearch-keystore create
+{{- if or (eq (.Values.BACKUP_PROVIDER | toString | b64dec) "aws") (eq (.Values.BACKUP_PROVIDER | toString | b64dec) "ncloud") }}
+          echo $BACKUP_ACCESS_KEY_ID | elasticsearch-keystore add --stdin --force s3.client.default.access_key
+          echo $BACKUP_SECRET_ACCESS_KEY | elasticsearch-keystore add --stdin --force s3.client.default.secret_key
+{{- end }}
+          bin/elasticsearch-plugin install --batch repository-s3
+          chmod 750 /usr/share/elasticsearch
+          chmod 750 /usr/share/elasticsearch/plugins
+          /usr/local/bin/docker-entrypoint.sh eswrapper
+        resources:
+          requests:
+            memory: {{ .Values.genians_nac6_es_memory | quote }}
+        securityContext:
+          allowPrivilegeEscalation: false
+          runAsUser: 0
+          seLinuxOptions:
+            level: "s0:c0"
+          capabilities:
+            add:
+              - IPC_LOCK
+        env:
+        - name: ELASTIC_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: elasticsearch-ztna-pass
+              key: password
+        - name: ES_JAVA_OPTS
+          valueFrom:
+            configMapKeyRef:
+              name: elasticsearch-ztna-config
+              key: ES_JAVA_OPTS
+        - name: node.name
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        envFrom:
+        - secretRef:
+            name: backup-secret
+        ports:
+        - containerPort: 9200
+          name: http
+          protocol: TCP
+        - containerPort: 9300
+          name: transport
+          protocol: TCP
+        livenessProbe:
+          tcpSocket:
+            port: 9200
+          initialDelaySeconds: 120
+          periodSeconds: 20
+        volumeMounts:
+        - name: es-ztna-data
+          mountPath: /usr/share/elasticsearch/data
+        - name: es-ztna-cert-storage
+          mountPath: /usr/share/elasticsearch/config/certs
+        - name: elasticsearch-ztna-config
+          mountPath: /usr/share/elasticsearch/config/elasticsearch.yml
+          subPath: elasticsearch.yml
+{{- if eq (.Values.BACKUP_PROVIDER | toString | b64dec) "local" }}
+        - name: es-ztna-backup-storage
+          mountPath: /usr/share/elasticsearch/backup
+{{- end }}
+      securityContext:
+        fsGroup: 0
+      volumes:
+      - name: elasticsearch-ztna-config
+        configMap:
+          defaultMode: 0660
+          name: elasticsearch-ztna-config
+          items:
+            - key: elasticsearch.yml
+              path: elasticsearch.yml
+      - name: es-ztna-cert-storage
+        persistentVolumeClaim:
+          claimName: es-ztna-cert-pvc
+{{- if eq (.Values.BACKUP_PROVIDER | toString | b64dec) "local" }}
+      - name: es-ztna-backup-storage
+        persistentVolumeClaim:
+          claimName: es-ztna-backup-pvc
+{{- end }}
+  volumeClaimTemplates:
+  - metadata:
+      name: es-ztna-data
+    spec:
+      accessModes:
+        - ReadWriteOnce
+      storageClassName: block
+      # NOTE: You can increase the storage size
+      resources:
+        requests:
+          storage: 256Gi
+{{ end }}

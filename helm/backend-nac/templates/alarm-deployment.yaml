@@ -1,0 +1,69 @@
+{{ if or (eq .Values.genians_nac_enable "yes") (eq .Values.genians_nac6_enable "yes") }}
+{{ if eq .Values.genians_mailserver_enable "yes" }}
+{{ if eq .Values.genians_mailserver_msa_enable "yes" }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: gnalarm
+  labels:
+    k8s-app: alarm-nac
+spec:
+  ports:
+  - name: alarm
+    port: 80
+  selector:
+    k8s-app: alarm-nac
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alarm-nac
+spec:
+  selector:
+    matchLabels:
+      k8s-app: alarm-nac
+  template:
+    metadata:
+      labels:
+        k8s-app: alarm-nac
+    spec:
+      containers:
+      - name: genian-msa-gnalarm
+        image: {{ template "gnalarm.repo" . }}
+        imagePullPolicy: {{ .Values.genians_default_imagepullpolicy }}
+        ports:
+          - containerPort: 80
+            protocol: TCP 
+        env:
+        - name: SMTPSERVER
+          value: {{ .Values.genians_mailserver_smtpserver }}
+{{ if eq .Values.genians_mailserver_smtpserver "AWSSES" }}
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: aws-secret
+              key: AWS_ACCESS_KEY_ID
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: aws-secret
+              key: AWS_SECRET_ACCESS_KEY
+{{ end }}
+{{ if eq .Values.genians_mailserver_smtpserver "NCLOUD" }}
+        - name: NCLOUD_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: ncloud-secret
+              key: NCLOUD_ACCESS_KEY_ID
+        - name: NCLOUD_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: ncloud-secret
+              key: NCLOUD_SECRET_ACCESS_KEY
+{{ end }}
+      restartPolicy: Always
+      imagePullSecrets:
+      - name: regcred
+{{ end }}
+{{ end }}
+{{ end }}

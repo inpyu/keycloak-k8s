@@ -1,0 +1,70 @@
+{{- if eq .Values.genians_gitops_enable "yes" }}
+  {{- if eq .Values.genians_nac_enable "yes" }}
+    {{- $custom_sql_nac := (lookup "v1" "ConfigMap" "default" "custom-sql-nac-config").data }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: custom-sql-nac-config
+data:
+{{- range $key, $value := $custom_sql_nac }}
+  {{ $key }}: |-
+{{ $value | indent 4 }}
+{{- end }}
+  {{- end }}
+  {{- if eq .Values.genians_nac6_enable "yes" }}
+    {{- $custom_sql_nac6 := (lookup "v1" "ConfigMap" "default" "custom-sql-nac6-config").data }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: custom-sql-nac6-config
+data:
+{{- range $key, $value := $custom_sql_nac6 }}
+  {{ $key }}: |-
+{{ $value | indent 4 }}
+{{- end }}
+  {{- end }}
+{{- else }}
+  {{- if eq .Values.genians_nac_enable "yes" }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: custom-sql-nac-config
+data:
+  CSM.sql: |-
+    #Revision 1
+    #FileHash sha1sum
+    #TableName CSM
+    #Restore 0
+    SELECT 1;
+  CSM_INIT.sql: |-
+    #Revision 1
+    #FileHash sha1sum
+    #TableName CSM_INIT
+    #Restore 0
+    SELECT 1;
+  CUSTOMSQL_GDPI_BETA: |-
+    UPDATE CONF SET CONF_VALUE = 'https://pi-api.genians.com/pi_beta/v1/platform/detect' WHERE CONF_CATGRY = 'NODEMGT' AND CONF_KEY = 'APIURL_GDPI';
+  {{- end }}
+  {{- if eq .Values.genians_nac6_enable "yes" }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: custom-sql-nac6-config
+data:
+  CSM.sql: |-
+    #Revision 1
+    #FileHash sha1sum
+    #TableName CSM
+    #Restore 0
+    SELECT 1;
+  CSM_INIT.sql: |-
+    #Revision 1
+    #FileHash sha1sum
+    #TableName CSM_INIT
+    #Restore 0
+    SELECT 1;
+  CUSTOMSQL_GDPI_BETA: |-
+    UPDATE CONF SET CONF_VALUE = 'https://pi-api.genians.com/pi_beta/v1/platform/detect' WHERE CONF_CATGRY = 'NODEMGT' AND CONF_KEY = 'APIURL_GDPI';
+  {{- end }}
+{{- end }}

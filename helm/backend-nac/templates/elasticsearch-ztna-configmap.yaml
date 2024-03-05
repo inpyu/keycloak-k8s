@@ -1,0 +1,44 @@
+{{ if eq .Values.genians_nac6_enable "yes" }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: elasticsearch-ztna-config
+data:
+  elasticsearch.yml: |
+    cluster.name: GENIAN-ZTNA
+    bootstrap.memory_lock: false
+    network.host: 0.0.0.0
+{{- if eq (.Values.BACKUP_PROVIDER | toString | b64dec) "local" }}
+    path.repo: ["/usr/share/elasticsearch/backup"]
+{{- end }}
+    node.max_local_storage_nodes: 1
+    action.destructive_requires_name: true
+    cluster.initial_master_nodes: [
+      {{- $replicas := (atoi .Values.elastic.replicas) }}
+      {{- range $k, $v := until $replicas }}
+        {{- printf "elasticsearch-ztna-%d" $v | quote }}
+        {{- if ne (add $v 1) $replicas }}
+          {{- print "," }}
+        {{- end }}
+      {{- end }}]
+    cluster.max_shards_per_node: 60000
+    discovery.zen.ping.unicast.hosts: [
+      {{- $replicas := (atoi .Values.elastic.replicas) }}
+      {{- range $k, $v := until $replicas }}
+        {{- printf "elasticsearch-ztna-%d.elasticsearch-ztna.default.svc.cluster.local" $v | quote }}
+        {{- if ne (add $v 1) $replicas }}
+          {{- print "," }}
+        {{- end }}
+      {{- end }}]
+    xpack.security.enabled: true
+    xpack.security.transport.ssl.enabled: true
+    xpack.security.transport.ssl.verification_mode: certificate
+    xpack.security.transport.ssl.keystore.path: /usr/share/elasticsearch/config/certs/elastic-certificates.p12
+    xpack.security.transport.ssl.truststore.path: /usr/share/elasticsearch/config/certs/elastic-certificates.p12
+    xpack.monitoring.collection.enabled: true
+{{- if eq (.Values.BACKUP_PROVIDER | toString | b64dec) "ncloud" }}
+    s3.client.default.endpoint: 'kr.object.gov-ncloudstorage.com'
+{{ end }}
+  ES_JAVA_OPTS: {{ .Values.genians_nac6_es_java_opts | quote }}
+  ES_USER: "elastic"
+{{ end }}

@@ -1,0 +1,113 @@
+{{- if eq .Values.genians_nac6_enable "yes" }}
+apiVersion: v1
+kind: Service
+metadata:
+{{- if eq .Values.genians_database_ha "yes" }}
+  name: dbserver-nac6-old
+{{- else }}
+  name: dbserver-nac6
+{{- end }}
+  labels:
+    app: mysql-nac6
+spec:
+  {{- .Values.mysql_nac6.service.spec | toYaml | nindent 4 }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mysql-nac6-pvc
+  labels:
+    app: mysql-nac6
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: block
+  resources:
+    requests:
+      storage: 128Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mysql-nac6
+  labels:
+    app: mysql-nac6
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mysql-nac6
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: mysql-nac6
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: role-backend
+                operator: In
+                values:
+                - "true"
+      enableServiceLinks: false
+      initContainers:
+      - name: mysql-nac6-init
+        image: mysql:8.0
+        securityContext:
+          allowPrivilegeEscalation: false
+          runAsUser: 0
+          seLinuxOptions:
+            level: "s0:c0"
+        command: ["sh", "-c", "chown 999:999 /var/log/mysql"]
+        volumeMounts:
+        - name: mysql-log-storage
+          mountPath: /var/log/mysql
+      containers:
+      - name: mysql
+        image: mysql:8.0
+        securityContext:
+          allowPrivilegeEscalation: false
+          runAsUser: 0
+          seLinuxOptions:
+            level: "s0:c0"
+        resources:
+          requests:
+            memory: "4Gi"
+        env:
+        - name: MYSQL_ROOT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mysql-nac6-pass
+              key: password
+        ports:
+        - containerPort: 3306
+          name: mysql
+        livenessProbe:
+          tcpSocket:
+            port: 3306
+          initialDelaySeconds: 120
+          periodSeconds: 20
+        volumeMounts:
+        - name: mysql-local-storage
+          mountPath: /var/lib/mysql
+        - name: mysql-config-volume
+          mountPath: /etc/mysql/conf.d/genians.cnf
+          subPath: genians.cnf
+        - name: mysql-log-storage
+          mountPath: /var/log/mysql
+      volumes:
+      - name: mysql-local-storage
+        persistentVolumeClaim:
+          claimName: mysql-nac6-pvc
+      - name: mysql-config-volume
+        configMap:
+          name: mysql-nac6-config
+      - name: mysql-log-storage
+        hostPath:
+          path: /data/logs/nac6-mysql
+          type: DirectoryOrCreate
+{{ end }}

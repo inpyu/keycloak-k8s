@@ -1,0 +1,429 @@
+{{ if eq .Values.genians_nac6_neo4j_enable "yes" }}
+
+# Neo4j config values that are required for neo4j to work correctly in Kubernetes, these are not overridden by user-provided values
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: "neo4j-ztna-k8s-config"
+  namespace: "default"
+  labels:
+    app: neo4j-ztna
+data:
+  server.default_listen_address: "0.0.0.0"
+---
+# User-provided Neo4j config values
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: "neo4j-ztna-user-config"
+  namespace: "default"
+  labels:
+    app: neo4j-ztna
+data:
+  dbms.security.procedures.unrestricted: gds.*
+  server.config.strict_validation.enabled: "false"
+  server.jvm.additional: |-
+    -XX:+UseG1GC
+    -XX:-OmitStackTraceInFastThrow
+    -XX:+AlwaysPreTouch
+    -XX:+UnlockExperimentalVMOptions
+    -XX:+TrustFinalNonStaticFields
+    -XX:+DisableExplicitGC
+    -Djdk.nio.maxCachedBufferSize=1024
+    -Dio.netty.tryReflectionSetAccessible=true
+    -Djdk.tls.ephemeralDHKeySize=2048
+    -Djdk.tls.rejectClientInitiatedRenegotiation=true
+    -XX:FlightRecorderOptions=stackdepth=256
+    -XX:+UnlockDiagnosticVMOptions
+    -XX:+DebugNonSafepoints
+    --add-opens=java.base/java.nio=ALL-UNNAMED
+    --add-opens=java.base/java.io=ALL-UNNAMED
+    --add-opens=java.base/sun.nio.ch=ALL-UNNAMED
+    -Dlog4j2.disable.jmx=true
+---
+# Default Neo4j config values, these are overridden by user-provided values in neo4j-ztna-user-config
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: "neo4j-ztna-default-config"
+  namespace: "default"
+  labels:
+    app: neo4j-ztna
+data:
+  # Neo4j defaults
+  server.bolt.enabled: 'true'
+  server.http.enabled: 'true'
+  server.https.enabled: 'false'
+  server.windows_service_name: neo4j
+
+  server.logs.config: /usr/share/neo4j/config/server-logs.xml/server-logs.xml
+  server.logs.user.config: /usr/share/neo4j/config/user-logs.xml/user-logs.xml
+
+  # Bolt keep alive
+  # this helps to ensure that LoadBalancers do not close bolt connections that are in use but appear idle
+  server.bolt.connection_keep_alive: "30s"
+  server.bolt.connection_keep_alive_for_requests: "ALL"
+  server.bolt.connection_keep_alive_streaming_scheduling_interval: "30s"
+
+  # Other
+  internal.dbms.ssl.system.ignore_dot_files: "true"
+  # Logging
+  server.directories.logs: "/usr/share/neo4j/logs"
+
+  # Import
+  server.directories.import: "/usr/share/neo4j/import"
+
+  # Use more reliable defaults SSL / TLS settings for K8s
+  dbms.ssl.policy.bolt.client_auth: "NONE"
+  dbms.ssl.policy.https.client_auth: "NONE"
+---
+# User-provided Neo4j Apoc config values
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: "neo4j-ztna-apoc-config"
+  namespace: "default"
+  labels:
+    app: neo4j-ztna
+data:
+  apoc.conf: |-
+    apoc.import.file.enabled=true
+    apoc.jdbc.neo4j.url="jdbc:neo4j://neo4j-ztna.default.svc.cluster.local:7687/neo4j"
+    apoc.trigger.enabled=true
+---
+# server-logs.xml as configmap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: "neo4j-ztna-server-logs-config"
+  namespace: "default"
+  labels:
+    app: neo4j-ztna
+data:
+  server-logs.xml: |-
+   <?xml version="1.0" encoding="UTF-8"?>
+   <!-- Example JSON logging configuration -->
+   <Configuration status="ERROR" monitorInterval="30" packages="org.neo4j.logging.log4j">
+       <Appenders>
+           <!-- Default debug.log, please keep -->
+           <RollingRandomAccessFile name="DebugLog" fileName="${config:server.directories.logs}/debug.log"
+                                    filePattern="$${config:server.directories.logs}/debug.log.%02i">
+               <JsonTemplateLayout eventTemplateUri="classpath:org/neo4j/logging/StructuredLayoutWithMessage.json"/>
+               <Policies>
+                   <SizeBasedTriggeringPolicy size="20 MB"/>
+               </Policies>
+               <DefaultRolloverStrategy fileIndex="min" max="7"/>
+           </RollingRandomAccessFile>
+
+           <RollingRandomAccessFile name="HttpLog" fileName="${config:server.directories.logs}/http.log"
+                                    filePattern="$${config:server.directories.logs}/http.log.%02i">
+               <JsonTemplateLayout eventTemplateUri="classpath:org/neo4j/logging/StructuredLayoutWithMessage.json"/>
+               <Policies>
+                   <SizeBasedTriggeringPolicy size="20 MB"/>
+               </Policies>
+               <DefaultRolloverStrategy fileIndex="min" max="5"/>
+           </RollingRandomAccessFile>
+
+           <RollingRandomAccessFile name="QueryLog" fileName="${config:server.directories.logs}/query.log"
+                                    filePattern="$${config:server.directories.logs}/query.log.%02i">
+               <JsonTemplateLayout eventTemplateUri="classpath:org/neo4j/logging/QueryLogJsonLayout.json"/>
+               <Policies>
+                   <SizeBasedTriggeringPolicy size="20 MB"/>
+               </Policies>
+               <DefaultRolloverStrategy fileIndex="min" max="7"/>
+            </RollingRandomAccessFile>
+
+            <RollingRandomAccessFile name="SecurityLog" fileName="${config:server.directories.logs}/security.log"
+                                     filePattern="$${config:server.directories.logs}/security.log.%02i">
+                <JsonTemplateLayout eventTemplateUri="classpath:org/neo4j/logging/StructuredLayoutWithMessage.json"/>
+                <Policies>
+                    <SizeBasedTriggeringPolicy size="20 MB"/>
+                </Policies>
+                <DefaultRolloverStrategy fileIndex="min" max="7"/>
+            </RollingRandomAccessFile>
+        </Appenders>
+
+        <Loggers>
+            <!-- Log levels. One of DEBUG, INFO, WARN, ERROR or OFF -->
+            <!-- The debug log is used as the root logger to catch everything -->
+            <Root level="DEBUG">
+                <AppenderRef ref="DebugLog"/> <!-- Keep this -->
+            </Root>
+            <!-- The query log, must be named "QueryLogger" -->
+            <Logger name="QueryLogger" level="DEBUG" additivity="false">
+                <AppenderRef ref="QueryLog"/>
+            </Logger>
+            <!-- The http request log, must be named "HttpLogger" -->
+            <Logger name="HttpLogger" level="DEBUG" additivity="false">
+                <AppenderRef ref="HttpLog"/>
+            </Logger>
+            <!-- The security log, must be named "SecurityLogger" -->
+            <Logger name="SecurityLogger" level="DEBUG" additivity="false">
+                <AppenderRef ref="SecurityLog"/>
+            </Logger>
+        </Loggers>
+    </Configuration>
+---
+# user-logs.xml as configmap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: "neo4j-ztna-user-logs-config"
+  namespace: "default"
+  labels:
+    app: neo4j-ztna
+data:
+  user-logs.xml: |-
+    <?xml version="1.0" encoding="UTF-8"?>
+    <!-- Example JSON logging configuration -->
+    <Configuration status="ERROR" monitorInterval="30" packages="org.neo4j.logging.log4j">
+    <Appenders>
+        <RollingRandomAccessFile name="Neo4jLog" fileName="${config:server.directories.logs}/neo4j.log"
+                                  filePattern="$${config:server.directories.logs}/neo4j.log.%02i">
+            <JsonTemplateLayout eventTemplateUri="classpath:org/neo4j/logging/StructuredLayoutWithMessage.json"/>
+            <Policies>
+                <SizeBasedTriggeringPolicy size="20 MB"/>
+            </Policies>
+            <DefaultRolloverStrategy fileIndex="min" max="7"/>
+        </RollingRandomAccessFile>
+        <!-- Only used by "neo4j console", will be ignored otherwise -->
+        <Console name="ConsoleAppender" target="SYSTEM_OUT">
+            <PatternLayout pattern="%d{yyyy-MM-dd HH:mm:ss.SSSZ}{GMT+0} %-5p %m%n"/>
+        </Console>
+    </Appenders>
+    <Loggers>
+        <!-- Log level for the neo4j log. One of DEBUG, INFO, WARN, ERROR or OFF -->
+        <Root level="DEBUG">
+            <AppenderRef ref="Neo4jLog"/>
+            <AppenderRef ref="ConsoleAppender"/>
+        </Root>
+    </Loggers>
+    </Configuration>
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: "neo4j-ztna-env"
+  namespace: "default"
+  labels:
+    app: neo4j-ztna
+data:
+  NEO4J_EDITION: "COMMUNITY_K8S"
+  NEO4J_CONF: "/usr/share/neo4j/config/"
+  K8S_NEO4J_NAME: "neo4j-ztna"
+  EXTENDED_CONF: "yes"
+  NEO4J_PLUGINS: '["graph-data-science"]'
+  HELM_NEO4J_VERSION: {{ .Values.neo4j.version }}
+  HELM_CHART_VERSION: {{ .Values.neo4j.version }}
+---
+# neo4j-filebeat config values
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: "neo4j-filebeat-config"
+  namespace: "default"
+  labels:
+    app: neo4j-ztna
+data:
+  insert2neo4j.sh: |-
+    #!/bin/bash
+
+    if [ "x$DEBUG" != "x" ]; then
+      set -x
+      echo "Debug option enable."
+    fi
+
+    if [ "x$REALTIME" = "x1" ]; then
+      echo "RealTime option enable."
+    fi
+
+    USER_ID=`echo $NEO4J_AUTH | cut -d'=' -f2 | cut -d'/' -f1`
+    USER_PW=`echo $NEO4J_AUTH | cut -d'=' -f2 | cut -d'/' -f2`
+    CREDENTIALS=`echo -n $USER_ID:$USER_PW | base64`
+
+    function neo4j_health()
+    {
+      curl -X GET -s -u ${USER_ID}:${USER_PW} http://neo4j-ztna.default.svc.cluster.local:7474/
+    }
+
+    function neo4j_insert()
+    {
+      curl -X POST -H "Content-Type: application/json" \
+        -H "Authorization: Basic ${CREDENTIALS}" \
+        -d '{
+            "statements": [
+                {
+                    "statement": "WITH $sourceIP AS sourceIP, $destinationIP AS destinationIP, $app AS app, $flow_id AS flowid, $byte_cnt AS byte_cnt, $packet_cnt AS packet_cnt, $transport AS transport, $source_port AS src_port, $dest_port AS dst_port MERGE (source:IP {address: sourceIP}) MERGE (destination:IP {address: destinationIP}) CREATE (flow:Flow { flow_id: flowid, byte_cnt: byte_cnt, packet_cnt: packet_cnt, transport: transport, source_port: src_port, dest_port: dst_port }) MERGE (source)-[:SENT]->(flow) MERGE (destination)-[:RECEIVED]->(flow)",
+                    "parameters": {
+                      "sourceIP": "'$1'",
+                      "destinationIP": "'$2'",
+                      "app": "'$3'",
+                      "flow_id": "'$4'",
+                      "byte_cnt": "'$5'",
+                      "packet_cnt": "'$6'",
+                      "transport": "'$7'",
+                      "source_port": "'$8'",
+                      "dest_port": "'$9'"
+                    }
+                }
+            ]
+          }' http://neo4j-ztna.default.svc.cluster.local:7474/db/neo4j/tx/commit
+    }
+
+    while true; do
+      # neo4j DB가 초기화 되었는지 체크한다.
+      neo4j_db_info=`neo4j_health`
+
+      # neo4j_db_info= {
+      #  "bolt_routing" : "neo4j://neo4j-ztna.default.svc.cluster.local:7687",
+      #  "transaction" : "http://neo4j-ztna.default.svc.cluster.local:7474/db/{databaseName}/tx",
+      #  "bolt_direct" : "bolt://neo4j-ztna.default.svc.cluster.local:7687",
+      #  "neo4j_version" : "5.10.0",
+      #  "neo4j_edition" : "community"
+      # }
+
+      neo4j_version=$(echo "$neo4j_db_info" | grep -o '"neo4j_version" : "[^"]*' | sed 's/.*: "//')
+
+      if [ "x$neo4j_version" = "x" ]; then
+        sleep 120
+        continue
+      fi
+
+      # /usr/share/filebeat/logs/netflow.json* 파일의 전체경로를 구한다
+      NETFLOW_JSON_FILES=`find /usr/share/filebeat/logs/netflow.json.* 2> /dev/null`
+
+      # 수집 초기에는 netflow.json파일이 생성되는데 시간이 소요된다.
+      if [ "x$NETFLOW_JSON_FILES" = "x" ]; then
+          sleep 60
+          
+          if [ "x$REALTIME" = "x1" ]; then
+            if [ -f "/usr/share/filebeat/logs/netflow.json" ]; then
+              cp -f "/usr/share/filebeat/logs/netflow.json" "/usr/share/filebeat/logs/netflow.json.1"
+            fi
+          fi
+
+          continue
+      fi
+
+      for FILE in $NETFLOW_JSON_FILES; do
+        while IFS= read -r line
+        do
+            # { "timestamp": "2023-09-21T01:33:29.000Z", 
+            #   "sourceIP": "172.29.99.109", 
+            #   "destinationIP": "172.29.3.1", 
+            #   "app": "", 
+            #   "flow_id": "2373740961785184256", 
+            #   "byte_cnt": "0", 
+            #   "packet_total_count": "0", 
+            #   "transport": "udp", 
+            #    "source_port": "36587", 
+            #    "dest_port": "53" }
+            TIMESTAMP=$(echo "$line" | grep -o '"timestamp": "[^"]*' | cut -d'"' -f4)
+            SRC_IP=$(echo "$line" | grep -o '"sourceIP": "[^"]*' | cut -d'"' -f4)
+            DST_IP=$(echo "$line" | grep -o '"destinationIP": "[^"]*' | cut -d'"' -f4)
+
+            APP_NAME=$(echo "$line" | grep -o '"app": "[^"]*' | cut -d'"' -f4)
+            if [ "x$APP_NAME" = "x" ]; then
+              APP_NAME=0
+            fi
+
+            FLOW_ID=$(echo "$line" | grep -o '"flow_id": "[^"]*' | cut -d'"' -f4)
+            BYTE_CNT=$(echo "$line" | grep -o '"byte_cnt": "[^"]*' | cut -d'"' -f4)
+            PACKET_CNT=$(echo "$line" | grep -o '"packet_total_count": "[^"]*' | cut -d'"' -f4)
+            PROTOCOL_TYPE=$(echo "$line" | grep -o '"transport": "[^"]*' | cut -d'"' -f4)
+            SRC_PORT=$(echo "$line" | grep -o '"source_port": "[^"]*' | cut -d'"' -f4)
+            DST_PORT=$(echo "$line" | grep -o '"dest_port": "[^"]*' | cut -d'"' -f4)
+
+            neo4j_insert $SRC_IP $DST_IP $APP_NAME $FLOW_ID $BYTE_CNT $PACKET_CNT $PROTOCOL_TYPE $SRC_PORT $DST_PORT
+            sleep 1
+        done < "$FILE"
+
+        rm -f $FILE
+      done
+
+      # 60초 대기
+      sleep 60
+    done
+
+  filebeat.yml: |-
+    filebeat.inputs:
+    - type: netflow
+      max_message_size: 10KiB
+      host: "0.0.0.0:9997"
+      protocols: [ v5, v9, ipfix ]
+      expiration_timeout: 10m
+      queue_size: 8192
+      custom_definitions:
+      - ipfix.yml
+      detect_sequence_reset: false
+      enabled: enable
+      fields:
+        level: debug
+
+    filebeat.config.modules:
+      path: /usr/share/filebeat/modules.d/*.yml
+      reload.enabled: false
+
+    logging.to_stderr: true
+    logging.level: debug
+
+    processors:
+      - dns:
+          type: reverse
+          fields:
+            destination.ip: destination.hostname
+      - add_fields:
+          target: ""
+          fields:
+            source.port: 0
+      - drop_fields:
+          fields: [
+            "agent.ephemeral_id", 
+            "agent.hostname", 
+            "agent.id", 
+            "agent.name", 
+            "agent.type", 
+            "agent.version", 
+            "ecs.version", 
+            "event.action",
+            "event.category",
+            "event.created",
+            "event.injested",
+            "event.kind",
+            "event.type",
+            "fields.level",
+            "host.name",
+            "observer.ip", 
+            "related.ip"]
+          ignore_missing: true
+
+
+    output:
+      file:
+        path: "/usr/share/filebeat/logs"
+        filename: netflow.json
+        enabled: true
+        permissions: 0600
+        number_of_files: 7
+        rotate_every_kb: 10240
+        codec.format:
+          string: "{
+                    \"timestamp\": \"%{[@timestamp]}\",
+                    \"sourceIP\": \"%{[netflow][source_ipv4_address]}\",
+                    \"destinationIP\": \"%{[netflow][destination_ipv4_address]}\",
+                    \"app\": \"%{[netflow][application_name]}\",
+                    \"flow_id\": \"%{[netflow][flow_id]}\",
+                    \"byte_cnt\": \"%{[netflow][octet_total_count]}\",
+                    \"packet_total_count\": \"%{[netflow][packet_total_count]}\",
+                    \"transport\": \"%{[network][transport]}\",
+                    \"source_port\": \"%{[netflow][source_transport_port]}\",
+                    \"dest_port\": \"%{[netflow][destination_transport_port]}\"
+                  }"
+
+  entrypoint.sh: |-
+    #!/bin/bash
+    set -x
+
+    /usr/share/filebeat/insert2neo4j.sh & 2>/dev/null
+    filebeat --strict.perms=false -e
+{{ end }}

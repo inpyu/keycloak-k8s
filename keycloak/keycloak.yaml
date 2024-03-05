@@ -1,0 +1,81 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: keycloak
+  labels:
+    app: keycloak
+spec:
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      nodePort: 30001
+    - name: https
+      port: 8443
+      targetPort: 8443
+      nodePort: 30002
+  selector:
+    app: keycloak
+  type: NodePort
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: keycloak
+spec:
+  selector:
+    matchLabels:
+      app: keycloak
+  replicas: 1
+  strategy: 
+      type: "RollingUpdate"
+      rollingUpdate: 
+        maxSurge: 1
+        maxUnavailable: 1
+  minReadySeconds: 6
+  template:
+    metadata:
+      labels:
+        app: keycloak
+    spec:
+      containers:
+        - name: keycloak
+          image: quay.io/keycloak/keycloak:22.0.1
+          imagePullPolicy: Always
+          args: ["start-dev"]
+          #volumeMounts:
+          #  - name: keycloak-data-volume
+          #    mountPath: /opt/keycloak/data/h2 
+          env:
+            - name: KEYCLOAK_ADMIN
+              value: "admin"
+            - name: KEYCLOAK_ADMIN_PASSWORD
+              value: "admin"
+            - name: KC_HOSTNAME
+              value: "kc.sdev.genians.kr"
+            - name: KC_HOSTNAME_PORT
+              value: "30001"
+            #- name: KC_HTTPS_CERTIFICATE_FILE
+            #  value: ingresstls.crt
+            #- name: KC_HTTPS_CERTIFICATE_KEY_FILE
+            #  value: ingresstls.key
+            - name: KC_DB
+              value: mysql
+            - name: KC_DB_URL
+              value: "jdbc:mysql://10.1.190.60/keycloak" #변경되는 주소 맞춰서 shell 작성 필요
+            - name: KC_DB_USERNAME
+              value: "root"
+            - name: KC_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-secret
+                  key: password
+          ports:
+            - name: http
+              containerPort: 8080
+            - name: https
+              containerPort: 8443
+      #volumes:
+      #  - name: keycloak-data-volume
+      #    persistentVolumeClaim:
+      #      claimName: keycloak-data-pvc

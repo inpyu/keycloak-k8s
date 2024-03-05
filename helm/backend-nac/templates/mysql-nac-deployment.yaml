@@ -1,0 +1,86 @@
+{{ if eq .Values.genians_nac_enable "yes" }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: dbserver
+  labels:
+    app: mysql
+spec:
+  ports:
+  - port: 3306
+  selector:
+    app: mysql
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mysql-nac-pvc
+  labels:
+    app: mysql
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: block
+  resources:
+    requests:
+      storage: 128Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mysql-nac
+  labels:
+    app: mysql
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mysql
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: mysql
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: role-backend
+                operator: In
+                values:
+                - "true"
+      enableServiceLinks: false
+      containers:
+      - name: mysql
+        image: mysql:5.7
+        args:
+          - "--ignore-db-dir=lost+found"
+        resources:
+          requests:
+            memory: "4Gi"
+        env:
+        - name: MYSQL_ROOT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mysql-nac-pass
+              key: password
+        ports:
+        - containerPort: 3306
+          name: mysql
+        volumeMounts:
+        - name: mysql-local-storage
+          mountPath: /var/lib/mysql
+        - name: mysql-config-volume
+          mountPath: /etc/mysql/conf.d/genians.cnf
+          subPath: genians.cnf
+      volumes:
+      - name: mysql-local-storage
+        persistentVolumeClaim:
+          claimName: mysql-nac-pvc
+      - name: mysql-config-volume
+        configMap:
+          name: mysql-nac-config
+{{ end }}

@@ -1,0 +1,53 @@
+{{ if eq .Values.genians_nac6_enable "yes" }}
+{{ if eq .Values.genians_database_ha "yes" }}
+# Master Mysql service.
+apiVersion: v1
+kind: Service
+metadata:
+  name: dbserver-nac6
+  labels:
+    app: mysql-ztna
+    app.kubernetes.io/name: mysql
+spec:
+  ports:
+  - name: mysql-ztna-mysql
+    port: 3306
+  - name: mysql-ztna-ncat
+    port: 3307
+  selector:
+    statefulset.kubernetes.io/pod-name: mysql-ztna-0
+---
+# Headless service for stable DNS entries of StatefulSet members.
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql-ztna
+  labels:
+    app: mysql-ztna
+    app.kubernetes.io/name: mysql
+spec:
+  ports:
+  - name: mysql-ztna
+    port: 3306
+  clusterIP: None
+  selector:
+    app: mysql-ztna
+---
+# Client service for connecting to any MySQL instance for reads.
+# For writes, you must instead connect to the primary: mysql-0.mysql.
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql-ztna-ro
+  labels:
+    app: mysql-ztna
+    app.kubernetes.io/name: mysql
+    readonly: "true"
+spec:
+  ports:
+  - name: mysql-ztna
+    port: 3306
+  selector:
+    app: mysql-ztna
+{{ end }}
+{{ end }}

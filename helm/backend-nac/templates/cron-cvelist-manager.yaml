@@ -1,0 +1,39 @@
+# multi tenancy 환경에서 cve를 관리할 대표 tenant를 선택하는 job
+{{- if .Values.genians_csm_server }}
+{{- $repo := "" }}
+{{- if eq .Values.genians_default_branch "current" }}{{- $repo = "-dev" }}{{- end }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: genian-nac-cve-manager
+spec:
+  schedule: "0 */4 * * *"
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 1
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: nac-cve-manager
+        spec:
+          serviceAccountName: ctlsrv
+          containers:
+          - name: genian-nac-cve-manager
+            image: {{ printf "docker.io/genians/genian-ctlsrv%s" $repo }}
+            securityContext:
+              allowPrivilegeEscalation: false
+              runAsUser: 0
+              seLinuxOptions:
+                level: "s0:c0"
+            command:
+            - /bin/bash
+            - -c
+            - |
+              /usr/geni/genictl nac-cve-manager
+            imagePullPolicy: {{ .Values.genians_default_imagepullpolicy }}
+          restartPolicy: OnFailure
+          imagePullSecrets:
+          - name: regcred
+{{- end }}

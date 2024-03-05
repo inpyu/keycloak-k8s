@@ -1,0 +1,93 @@
+{{ if eq .Values.genians_nac6_neo4j_enable "yes" }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: filebeat-neo4j-nodeport
+  labels:
+    app: filebeat-neo4j
+spec:
+  type: NodePort
+  ports:
+  - name: event
+    port: 9997
+    protocol: UDP
+    nodePort: 9997
+  selector:
+    app: filebeat-neo4j
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: filebeat-neo4j
+  labels:
+    app: filebeat-neo4j
+spec:
+  selector:
+    matchLabels:
+      app: filebeat-neo4j
+  template:
+    metadata:
+      name: filebeat-neo4j
+      labels:
+        app: filebeat-neo4j
+    spec:
+      enableServiceLinks: false
+      automountServiceAccountToken: false
+      containers:
+      - name: filebeat-neo4j
+        image: genians/filebeat:{{ .Values.elastic.version }}
+        securityContext:
+          allowPrivilegeEscalation: false
+          runAsUser: 1000
+          seLinuxOptions:
+            level: "s0:c0"
+        imagePullPolicy: {{ .Values.genians_default_imagepullpolicy }}
+        volumeMounts:
+        - name: neo4j-filebeat-ztna-insert2neo4j
+          mountPath: /usr/share/filebeat/insert2neo4j.sh
+          subPath: insert2neo4j.sh
+        - name: neo4j-filebeat-ztna-config
+          mountPath: /usr/share/filebeat/filebeat.yml
+          subPath: filebeat.yml
+        - name: neo4j-filebeat-ztna-entrypoint
+          mountPath: /entrypoint.sh
+          subPath: entrypoint.sh
+          readOnly: true
+        envFrom:
+          - configMapRef:
+              name: "neo4j-ztna-env"
+          - secretRef:
+              name: "neo4j-ztna-pass"
+        env:
+        - name: SERVICE_NEO4J
+          value: "neo4j-ztna.default.svc.cluster.local"
+        ports:
+        - containerPort: 9997
+          protocol: TCP
+        - containerPort: 9997
+          protocol: UDP
+      imagePullSecrets:
+      - name: regcred
+      volumes:
+      - name: neo4j-filebeat-ztna-insert2neo4j
+        configMap:
+          name: neo4j-filebeat-config
+          items:
+          - key: insert2neo4j.sh
+            path: insert2neo4j.sh
+            mode: 0755
+      - name: neo4j-filebeat-ztna-config
+        configMap:
+          name: neo4j-filebeat-config
+          items:
+          - key: filebeat.yml
+            path: filebeat.yml
+            mode: 0755
+      - name: neo4j-filebeat-ztna-entrypoint
+        configMap:
+          name: neo4j-filebeat-config
+          items:
+          - key: entrypoint.sh
+            path: entrypoint.sh
+            mode: 0755
+{{ end }}
